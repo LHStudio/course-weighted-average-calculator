@@ -1,0 +1,23 @@
+# User data and generated workbooks
+*.xls
+*.xlsx
+*.csv
+*.tsv
+outputs/
+
+# Local builds and Python cache
+build/
+dist/
+__pycache__/
+*.py[cod]
+
+# Local PyInstaller metadata and packaged binary
+*.spec
+*.exe
+
+# Editor and OS metadata
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
