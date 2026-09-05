@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import math
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 from typing import Callable, Sequence
 
 from course_calculator import (
@@ -42,6 +43,12 @@ def _display_number(value: object, digits: int = 1) -> str:
     return text.rstrip("0").rstrip(".") if digits else text
 
 
+def resource_path(relative_path: str | Path) -> Path:
+    """Resolve an asset from the source tree or PyInstaller's temp folder."""
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return bundle_root / relative_path
+
+
 class ScrollableCourseList(ttk.Frame):
     COLUMNS = (
         ("", 42, "center"),
@@ -56,26 +63,35 @@ class ScrollableCourseList(ttk.Frame):
 
     def __init__(self, master: tk.Misc) -> None:
         super().__init__(master, style="Surface.TFrame")
+        self.checkbox_font = tkfont.Font(family="Microsoft YaHei UI", size=13)
+        self._variables: list[tk.BooleanVar] = []
+        self._checkbuttons: dict[str, tk.Checkbutton] = {}
+
+        self.header_canvas = tk.Canvas(self, background="#E9EEF3", height=34, highlightthickness=0)
+        self.header_frame = ttk.Frame(self.header_canvas, style="Surface.TFrame")
+        self.header_window = self.header_canvas.create_window((0, 0), window=self.header_frame, anchor="nw")
+        self.header_canvas.grid(row=0, column=0, sticky="ew")
+
         self.canvas = tk.Canvas(self, background=SURFACE, highlightthickness=0)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.horizontal_scrollbar = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.horizontal_scrollbar = ttk.Scrollbar(self, orient="horizontal", command=self._xview)
         self.canvas.configure(
             yscrollcommand=self.scrollbar.set,
-            xscrollcommand=self.horizontal_scrollbar.set,
+            xscrollcommand=self._sync_horizontal_scrollbar,
         )
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.scrollbar.grid(row=0, column=1, sticky="ns")
-        self.horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
+        self.canvas.grid(row=1, column=0, sticky="nsew")
+        self.scrollbar.grid(row=1, column=1, sticky="ns")
+        self.horizontal_scrollbar.grid(row=2, column=0, sticky="ew")
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
         self.inner = ttk.Frame(self.canvas, style="Surface.TFrame")
         self.window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", self._update_scroll_region)
         self.canvas.bind("<Configure>", self._resize_inner)
+        self.header_canvas.bind("<Configure>", self._resize_header)
         self.canvas.bind("<Enter>", lambda _event: self.canvas.bind_all("<MouseWheel>", self._on_wheel))
         self.canvas.bind("<Leave>", lambda _event: self.canvas.unbind_all("<MouseWheel>"))
-        self._variables: list[tk.BooleanVar] = []
 
     def _update_scroll_region(self, _event=None) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -83,6 +99,24 @@ class ScrollableCourseList(ttk.Frame):
     def _resize_inner(self, event) -> None:
         required = sum(width for _, width, _ in self.COLUMNS)
         self.canvas.itemconfigure(self.window, width=max(event.width, required))
+        self.header_canvas.itemconfigure(self.header_window, width=max(event.width, required))
+        self.header_canvas.configure(scrollregion=(0, 0, max(event.width, required), 34))
+
+    def _resize_header(self, event) -> None:
+        required = sum(width for _, width, _ in self.COLUMNS)
+        self.header_canvas.itemconfigure(self.header_window, width=max(event.width, required))
+
+    def _sync_horizontal_scrollbar(self, first: str, last: str) -> None:
+        self.horizontal_scrollbar.set(first, last)
+        self.header_canvas.xview_moveto(first)
+
+    def _xview(self, *args) -> None:
+        self.canvas.xview(*args)
+        self.header_canvas.xview(*args)
+
+    def _configure_columns(self, frame: tk.Misc) -> None:
+        for column, (_, width, _) in enumerate(self.COLUMNS):
+            frame.grid_columnconfigure(column, minsize=width, weight=1 if column == 2 else 0)
 
     def _on_wheel(self, event) -> None:
         self.canvas.yview_scroll(int(-event.delta / 120), "units")
@@ -96,12 +130,15 @@ class ScrollableCourseList(ttk.Frame):
     ) -> None:
         for child in self.inner.winfo_children():
             child.destroy()
+        for child in self.header_frame.winfo_children():
+            child.destroy()
         self._variables.clear()
+        self._checkbuttons.clear()
 
+        self._configure_columns(self.header_frame)
         for column, (label, width, anchor) in enumerate(self.COLUMNS):
-            self.inner.grid_columnconfigure(column, minsize=width, weight=1 if column == 2 else 0)
             header = ttk.Label(
-                self.inner,
+                self.header_frame,
                 text=label,
                 anchor=anchor,
                 padding=(8, 8),
@@ -116,19 +153,30 @@ class ScrollableCourseList(ttk.Frame):
                 style="Empty.TLabel",
                 anchor="center",
                 padding=30,
-            ).grid(row=1, column=0, columnspan=len(self.COLUMNS), sticky="ew")
+            ).grid(row=0, column=0, columnspan=len(self.COLUMNS), sticky="ew")
             self._update_scroll_region()
             return
 
-        for row_index, record in enumerate(records, start=1):
+        self._configure_columns(self.inner)
+        for row_index, record in enumerate(records):
             variable = tk.BooleanVar(value=selection_state.get(record.record_id, True))
             self._variables.append(variable)
-            check = ttk.Checkbutton(
+            check = tk.Checkbutton(
                 self.inner,
                 variable=variable,
+                font=self.checkbox_font,
+                background=SURFACE,
+                activebackground=SURFACE,
+                selectcolor="#CFE8EF",
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                padx=5,
+                pady=0,
                 command=lambda item=record, var=variable: on_change(item, var.get()),
             )
             check.grid(row=row_index, column=0, sticky="nsew", padx=(12, 4), pady=1)
+            self._checkbuttons[record.record_id] = check
 
             values = (
                 record.course_code,
@@ -155,6 +203,77 @@ class ScrollableCourseList(ttk.Frame):
         self._update_scroll_region()
 
 
+class GpaBandsEditor(ttk.Frame):
+    """Editable list of score thresholds and their corresponding GPA values."""
+
+    def __init__(self, master: tk.Misc, bands: Sequence[tuple[float, float]]) -> None:
+        super().__init__(master, style="Surface.TFrame")
+        self.variables: list[tuple[tk.StringVar, tk.StringVar]] = []
+        self._rows: list[tuple[ttk.Entry, ttk.Entry]] = []
+
+        ttk.Label(self, text="最低分", style="CourseHeader.TLabel", padding=(20, 6)).grid(
+            row=0, column=0, sticky="ew", padx=(0, 6)
+        )
+        ttk.Label(self, text="绩点", style="CourseHeader.TLabel", padding=(20, 6)).grid(
+            row=0, column=1, sticky="ew", padx=(6, 0)
+        )
+        self.rows_frame = ttk.Frame(self, style="Surface.TFrame")
+        self.rows_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.columnconfigure(0, weight=1)
+        self.columnconfigure(1, weight=1)
+
+        controls = ttk.Frame(self, style="Surface.TFrame")
+        controls.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        ttk.Button(controls, text="添加分段", command=self.add_row).pack(side="left")
+        ttk.Button(controls, text="删除末行", command=self.remove_row).pack(side="left", padx=(6, 0))
+
+        for threshold, points in bands:
+            self.add_row(threshold, points)
+        if not self.variables:
+            self.add_row()
+
+    def add_row(self, threshold: object = "", points: object = "") -> None:
+        threshold_var = tk.StringVar(value=_display_number(threshold, 2) if threshold != "" else "")
+        points_var = tk.StringVar(value=_display_number(points, 2) if points != "" else "")
+        threshold_entry = ttk.Entry(self.rows_frame, textvariable=threshold_var, width=12, justify="center")
+        points_entry = ttk.Entry(self.rows_frame, textvariable=points_var, width=12, justify="center")
+        self.variables.append((threshold_var, points_var))
+        self._rows.append((threshold_entry, points_entry))
+        self._regrid_rows()
+
+    def remove_row(self) -> None:
+        if len(self.variables) <= 1:
+            return
+        threshold_entry, points_entry = self._rows.pop()
+        threshold_entry.destroy()
+        points_entry.destroy()
+        self.variables.pop()
+        self._regrid_rows()
+
+    def _regrid_rows(self) -> None:
+        for row_index, (threshold_entry, points_entry) in enumerate(self._rows):
+            threshold_entry.grid(row=row_index, column=0, padx=(0, 6), pady=3)
+            points_entry.grid(row=row_index, column=1, padx=(6, 0), pady=3)
+
+    def set_bands(self, bands: Sequence[tuple[float, float]]) -> None:
+        for threshold_entry, points_entry in self._rows:
+            threshold_entry.destroy()
+            points_entry.destroy()
+        self.variables.clear()
+        self._rows.clear()
+        for threshold, points in bands:
+            self.add_row(threshold, points)
+        if not self.variables:
+            self.add_row()
+
+    def get_bands(self) -> list[tuple[float, float]]:
+        try:
+            bands = [(float(threshold.get().strip()), float(points.get().strip())) for threshold, points in self.variables]
+        except ValueError as exc:
+            raise ValueError("最低分和绩点必须填写数字。") from exc
+        return sorted(bands, reverse=True)
+
+
 class CourseCalculatorApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -162,6 +281,12 @@ class CourseCalculatorApp:
         self.root.geometry("1240x820")
         self.root.minsize(1020, 680)
         self.root.configure(background=BG)
+        icon_path = resource_path(Path("assets") / "icon.ico")
+        if icon_path.is_file():
+            try:
+                self.root.iconbitmap(default=str(icon_path))
+            except tk.TclError:
+                pass
 
         self.source_path: Path | None = None
         self.raw_records: list[CourseRecord] = []
@@ -417,6 +542,12 @@ class CourseCalculatorApp:
 
     def _refresh_course_list(self) -> None:
         records = self.student_records.get(self.current_student_id or "", [])
+        self._update_course_title(records)
+        self.course_list.set_records(records, self.selection_state, self.text_mapping, self._on_course_toggled)
+
+    def _update_course_title(self, records: Sequence[CourseRecord] | None = None) -> None:
+        if records is None:
+            records = self.student_records.get(self.current_student_id or "", [])
         if records:
             first = records[0]
             selected_count = sum(self.selection_state.get(item.record_id, True) for item in records)
@@ -425,12 +556,22 @@ class CourseCalculatorApp:
             )
         else:
             self.course_title_var.set("课程明细")
-        self.course_list.set_records(records, self.selection_state, self.text_mapping, self._on_course_toggled)
 
     def _on_course_toggled(self, record: CourseRecord, selected: bool) -> None:
         self.selection_state[record.record_id] = selected
         self.recalculate(refresh_students=False)
-        self._refresh_course_list()
+        self._update_course_title()
+        self._update_student_status(record.student_id)
+
+    def _update_student_status(self, student_id: str) -> None:
+        if not self.student_tree.exists(student_id):
+            return
+        result = next((row for row in self.result_rows if row["student_id"] == student_id), None)
+        status = "可计算" if result and result.get("weighted_average") is not None else "无有效成绩"
+        values = list(self.student_tree.item(student_id, "values"))
+        if len(values) >= 3:
+            values[2] = status
+            self.student_tree.item(student_id, values=values)
 
     def set_current_selection(self, selected: bool) -> None:
         for record in self.student_records.get(self.current_student_id or "", []):
@@ -476,8 +617,8 @@ class CourseCalculatorApp:
             self._refresh_student_tree()
         computable = sum(row["weighted_average"] is not None for row in self.result_rows)
         self.summary_var.set(
-            f"当前规则：{self.key_mode_var.get()}，重复课程取{self.keep_mode_var.get()}；"
-            f"{computable}/{len(self.result_rows)} 名学生可计算"
+            f"重新计算完成：{computable}/{len(self.result_rows)} 名学生可计算；"
+            f"当前规则：{self.key_mode_var.get()}，重复课程取{self.keep_mode_var.get()}"
         )
 
     def _refresh_result_tree(self) -> None:
@@ -555,32 +696,26 @@ class CourseCalculatorApp:
         dialog = tk.Toplevel(self.root)
         dialog.title("绩点换算规则")
         dialog.transient(self.root)
-        dialog.resizable(False, False)
+        dialog.resizable(False, True)
         frame = ttk.Frame(dialog, style="Surface.TFrame", padding=18)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="成绩达到最低分时使用对应绩点。", style="Muted.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
-        ttk.Label(frame, text="最低分", style="CourseHeader.TLabel", padding=(20, 6)).grid(row=1, column=0, sticky="ew")
-        ttk.Label(frame, text="绩点", style="CourseHeader.TLabel", padding=(20, 6)).grid(row=1, column=1, sticky="ew")
-        variables: list[tuple[tk.StringVar, tk.StringVar]] = []
-        for row_index, (threshold, points) in enumerate(self.gpa_bands, start=2):
-            threshold_var = tk.StringVar(value=_display_number(threshold, 2))
-            points_var = tk.StringVar(value=_display_number(points, 2))
-            ttk.Entry(frame, textvariable=threshold_var, width=12, justify="center").grid(row=row_index, column=0, padx=(0, 6), pady=3)
-            ttk.Entry(frame, textvariable=points_var, width=12, justify="center").grid(row=row_index, column=1, padx=(6, 0), pady=3)
-            variables.append((threshold_var, points_var))
+        ttk.Label(frame, text="成绩达到最低分时使用对应绩点。可添加任意数量的分段。", style="Muted.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 12)
+        )
+        editor = GpaBandsEditor(frame, self.gpa_bands)
+        editor.grid(row=1, column=0, sticky="ew")
+        frame.columnconfigure(0, weight=1)
 
         def restore_defaults() -> None:
-            for pair, default in zip(variables, DEFAULT_GPA_BANDS):
-                pair[0].set(_display_number(default[0], 2))
-                pair[1].set(_display_number(default[1], 2))
+            editor.set_bands(DEFAULT_GPA_BANDS)
 
         def save() -> None:
             try:
-                bands = [(float(threshold.get()), float(points.get())) for threshold, points in variables]
+                bands = editor.get_bands()
                 thresholds = [threshold for threshold, _ in bands]
-                if any(not 0 <= threshold <= 100 for threshold in thresholds):
+                if any(not math.isfinite(threshold) or not 0 <= threshold <= 100 for threshold in thresholds):
                     raise ValueError("最低分必须在 0 到 100 之间。")
-                if any(points < 0 for _, points in bands):
+                if any(not math.isfinite(points) or points < 0 for _, points in bands):
                     raise ValueError("绩点不能为负数。")
                 if len(set(thresholds)) != len(thresholds):
                     raise ValueError("最低分不能重复。")
@@ -592,10 +727,10 @@ class CourseCalculatorApp:
             self.gpa_bands = sorted(bands, reverse=True)
             dialog.destroy()
             self.recalculate(refresh_students=True)
-            self.summary_var.set("绩点换算规则已更新")
+            self.summary_var.set(f"重新计算完成：已更新 {len(bands)} 段绩点换算规则")
 
         button_row = ttk.Frame(frame, style="Surface.TFrame")
-        button_row.grid(row=2 + len(variables), column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        button_row.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         ttk.Button(button_row, text="恢复默认", command=restore_defaults).pack(side="left")
         ttk.Button(button_row, text="取消", command=dialog.destroy).pack(side="right")
         ttk.Button(button_row, text="保存并计算", style="Primary.TButton", command=save).pack(side="right", padx=(0, 8))

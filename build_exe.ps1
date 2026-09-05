@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 $BuildDirectory = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "build"))
 $DistDirectory = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "dist"))
+$IconPath = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot "assets\icon.ico"))
 $AppName = -join @(
     [char]0x8BFE, [char]0x7A0B, [char]0x52A0, [char]0x6743, [char]0x5E73,
     [char]0x5747, [char]0x5206, [char]0x8BA1, [char]0x7B97, [char]0x5668
@@ -29,6 +30,9 @@ $Python = (Get-Command python -ErrorAction Stop).Source
 if ($LASTEXITCODE -ne 0) {
     throw "The selected Python must provide openpyxl, PyInstaller, and tkinter."
 }
+if (-not (Test-Path -LiteralPath $IconPath)) {
+    throw "Missing application icon: $IconPath"
+}
 
 & $Python -m PyInstaller `
     --noconfirm `
@@ -36,6 +40,8 @@ if ($LASTEXITCODE -ne 0) {
     --onefile `
     --windowed `
     --name $AppName `
+    --icon $IconPath `
+    --add-data "$IconPath;assets" `
     --distpath $DistDirectory `
     --workpath $BuildDirectory `
     --specpath $ProjectRoot `
@@ -49,5 +55,8 @@ $Executable = Join-Path $DistDirectory "$AppName.exe"
 if (-not (Test-Path -LiteralPath $Executable)) {
     throw "Build finished without the expected executable: $Executable"
 }
+$RootExecutable = Join-Path $ProjectRoot "$AppName.exe"
+Copy-Item -LiteralPath $Executable -Destination $RootExecutable -Force
 
 Write-Host "Built: $Executable"
+Write-Host "Copied: $RootExecutable"

@@ -8,6 +8,12 @@ class BuildScriptTests(unittest.TestCase):
 
         script.read_text(encoding="ascii")
 
+    def test_build_script_embeds_custom_icon(self):
+        script = (Path(__file__).parents[1] / "build_exe.ps1").read_text(encoding="ascii")
+
+        self.assertIn("--icon", script)
+        self.assertIn("--add-data", script)
+
 
 if __name__ == "__main__":
     unittest.main()
