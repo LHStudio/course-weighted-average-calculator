@@ -84,78 +84,80 @@ def resource_path(relative_path: str | Path) -> Path:
     return bundle_root / relative_path
 
 
+class _CheckboxProxy:
+    """Compatibility shim for callers that inspect the old checkbox mapping."""
+
+    def __init__(self, background: str) -> None:
+        self.background = background
+
+    def cget(self, option: str) -> str:
+        if option != "background":
+            raise tk.TclError(f"unknown option {option}")
+        return self.background
+
+
 class ScrollableCourseList(ttk.Frame):
     COLUMNS = (
-        ("", 42, "center"),
-        ("课程代码", 112, "w"),
-        ("课程名称", 210, "w"),
-        ("学分", 62, "center"),
-        ("成绩", 70, "center"),
-        ("取得学期", 180, "w"),
-        ("课程类别", 140, "w"),
-        ("取得方式", 90, "center"),
+        ("选择", 62, "center"),
+        ("课程代码", 118, "w"),
+        ("课程名称", 220, "w"),
+        ("学分", 66, "center"),
+        ("成绩", 74, "center"),
+        ("取得学期", 190, "w"),
+        ("课程类别", 160, "w"),
+        ("取得方式", 110, "center"),
     )
 
     def __init__(self, master: tk.Misc) -> None:
         super().__init__(master, style="Surface.TFrame")
-        self.checkbox_font = tkfont.Font(family="Microsoft YaHei UI", size=13)
+        self.checkbox_font = tkfont.Font(family="Segoe UI Symbol", size=20)
         self._variables: list[tk.BooleanVar] = []
-        self._checkbuttons: dict[str, tk.Checkbutton] = {}
+        self._checkbuttons: dict[str, _CheckboxProxy] = {}
         self.row_styles: dict[str, str] = {}
+        self._records_by_id: dict[str, CourseRecord] = {}
+        self._selection_state: dict[str, bool] = {}
+        self._on_change: Callable[[CourseRecord, bool], None] | None = None
 
-        self.header_canvas = tk.Canvas(self, background="#E9EEF3", height=34, highlightthickness=0)
-        self.header_frame = ttk.Frame(self.header_canvas, style="Surface.TFrame")
-        self.header_window = self.header_canvas.create_window((0, 0), window=self.header_frame, anchor="nw")
-        self.header_canvas.grid(row=0, column=0, sticky="ew")
+        columns = tuple(f"course_{index}" for index in range(len(self.COLUMNS)))
+        self.tree = ttk.Treeview(self, columns=columns, show="headings", selectmode="browse", style="Course.Treeview")
+        self.header_canvas = self.tree
+        self.canvas = self.tree
+        for column, (label, width, anchor) in zip(columns, self.COLUMNS):
+            self.tree.heading(column, text=label, anchor=anchor)
+            self.tree.column(column, width=width, minwidth=width, anchor=anchor, stretch=column == "course_2")
+        self.tree.tag_configure("normal", background=SURFACE, foreground=TEXT)
+        self.tree.tag_configure("warning", background="#FFF5E6", foreground=TEXT)
+        self.tree.bind("<Button-1>", self._on_click, add="+")
 
-        self.canvas = tk.Canvas(self, background=SURFACE, highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.horizontal_scrollbar = ttk.Scrollbar(self, orient="horizontal", command=self._xview)
-        self.canvas.configure(
-            yscrollcommand=self.scrollbar.set,
-            xscrollcommand=self._sync_horizontal_scrollbar,
-        )
-        self.canvas.grid(row=1, column=0, sticky="nsew")
-        self.scrollbar.grid(row=1, column=1, sticky="ns")
-        self.horizontal_scrollbar.grid(row=2, column=0, sticky="ew")
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.horizontal_scrollbar = ttk.Scrollbar(self, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=self.scrollbar.set, xscrollcommand=self.horizontal_scrollbar.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        self.horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        self.inner = ttk.Frame(self.canvas, style="Surface.TFrame")
-        self.window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.inner.bind("<Configure>", self._update_scroll_region)
-        self.canvas.bind("<Configure>", self._resize_inner)
-        self.header_canvas.bind("<Configure>", self._resize_header)
-        self.canvas.bind("<Enter>", lambda _event: self.canvas.bind_all("<MouseWheel>", self._on_wheel))
-        self.canvas.bind("<Leave>", lambda _event: self.canvas.unbind_all("<MouseWheel>"))
+    def _on_click(self, event) -> None:
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        if self.tree.identify_column(event.x) == "#1":
+            item_id = self.tree.identify_row(event.y)
+            if item_id:
+                self._toggle_item(item_id)
+                return "break"
 
-    def _update_scroll_region(self, _event=None) -> None:
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-
-    def _resize_inner(self, event) -> None:
-        required = sum(width for _, width, _ in self.COLUMNS)
-        self.canvas.itemconfigure(self.window, width=max(event.width, required))
-        self.header_canvas.itemconfigure(self.header_window, width=max(event.width, required))
-        self.header_canvas.configure(scrollregion=(0, 0, max(event.width, required), 34))
-
-    def _resize_header(self, event) -> None:
-        required = sum(width for _, width, _ in self.COLUMNS)
-        self.header_canvas.itemconfigure(self.header_window, width=max(event.width, required))
-
-    def _sync_horizontal_scrollbar(self, first: str, last: str) -> None:
-        self.horizontal_scrollbar.set(first, last)
-        self.header_canvas.xview_moveto(first)
-
-    def _xview(self, *args) -> None:
-        self.canvas.xview(*args)
-        self.header_canvas.xview(*args)
-
-    def _configure_columns(self, frame: tk.Misc) -> None:
-        for column, (_, width, _) in enumerate(self.COLUMNS):
-            frame.grid_columnconfigure(column, minsize=width, weight=1 if column == 2 else 0)
-
-    def _on_wheel(self, event) -> None:
-        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+    def _toggle_item(self, item_id: str) -> None:
+        record = self._records_by_id.get(item_id)
+        if record is None:
+            return
+        selected = not self._selection_state.get(item_id, True)
+        self._selection_state[item_id] = selected
+        values = list(self.tree.item(item_id, "values"))
+        values[0] = "☑" if selected else "☐"
+        self.tree.item(item_id, values=values)
+        if self._on_change:
+            self._on_change(record, selected)
 
     def set_records(
         self,
@@ -164,60 +166,19 @@ class ScrollableCourseList(ttk.Frame):
         text_mapping: dict[str, float],
         on_change: Callable[[CourseRecord, bool], None],
     ) -> None:
-        for child in self.inner.winfo_children():
-            child.destroy()
-        for child in self.header_frame.winfo_children():
-            child.destroy()
+        self.tree.delete(*self.tree.get_children())
         self._variables.clear()
         self._checkbuttons.clear()
         self.row_styles.clear()
-
-        self._configure_columns(self.header_frame)
-        for column, (label, width, anchor) in enumerate(self.COLUMNS):
-            header = ttk.Label(
-                self.header_frame,
-                text=label,
-                anchor=anchor,
-                padding=(8, 8),
-                style="CourseHeader.TLabel",
-            )
-            header.grid(row=0, column=column, sticky="nsew")
-
-        if not records:
-            ttk.Label(
-                self.inner,
-                text="请先选择一名学生",
-                style="Empty.TLabel",
-                anchor="center",
-                padding=30,
-            ).grid(row=0, column=0, columnspan=len(self.COLUMNS), sticky="ew")
-            self._update_scroll_region()
-            return
-
-        self._configure_columns(self.inner)
-        for row_index, record in enumerate(records):
+        self._records_by_id = {record.record_id: record for record in records}
+        self._selection_state = selection_state
+        self._on_change = on_change
+        for record in records:
             is_non_initial = record.acquisition != "初修取得"
             self.row_styles[record.record_id] = "warning" if is_non_initial else "normal"
-            variable = tk.BooleanVar(value=selection_state.get(record.record_id, True))
-            self._variables.append(variable)
-            check = tk.Checkbutton(
-                self.inner,
-                variable=variable,
-                font=self.checkbox_font,
-                background="#FFF5E6" if is_non_initial else SURFACE,
-                activebackground="#FFF5E6" if is_non_initial else SURFACE,
-                selectcolor="#CFE8EF",
-                relief="flat",
-                bd=0,
-                highlightthickness=0,
-                padx=8,
-                pady=4,
-                command=lambda item=record, var=variable: on_change(item, var.get()),
-            )
-            check.grid(row=row_index, column=0, sticky="nsew", padx=(12, 4), pady=1)
-            self._checkbuttons[record.record_id] = check
-
+            selected = selection_state.get(record.record_id, True)
             values = (
+                "☑" if selected else "☐",
                 record.course_code,
                 record.course_name,
                 _display_number(record.credits, 2),
@@ -226,23 +187,10 @@ class ScrollableCourseList(ttk.Frame):
                 record.category,
                 record.acquisition,
             )
-            score_is_text = parse_score(record.raw_score, {}) is None
-            for column, value in enumerate(values, start=1):
-                if is_non_initial:
-                    style = "WarningCourseText.TLabel" if column == 7 else "WarningCourseCell.TLabel"
-                else:
-                    style = "Warning.TLabel" if column == 4 and score_is_text else "CourseCell.TLabel"
-                label = ttk.Label(
-                    self.inner,
-                    text=value,
-                    anchor=self.COLUMNS[column][2],
-                    padding=(8, 7),
-                    style=style,
-                )
-                label.grid(row=row_index, column=column, sticky="nsew", pady=1)
-            self.inner.grid_rowconfigure(row_index, minsize=40)
-        self.canvas.yview_moveto(0)
-        self._update_scroll_region()
+            self.tree.insert("", "end", iid=record.record_id, values=values, tags=("warning" if is_non_initial else "normal",))
+            self._checkbuttons[record.record_id] = _CheckboxProxy("#FFF5E6" if is_non_initial else SURFACE)
+        if records:
+            self.tree.yview_moveto(0)
 
 
 class GpaBandsEditor(ttk.Frame):
@@ -366,6 +314,7 @@ class CourseCalculatorApp:
         self.student_search_var = tk.StringVar()
         self.course_search_var = tk.StringVar()
         self.acquisition_filter_var = tk.StringVar(value=ACQUISITION_FILTERS[0])
+        self.toggle_font = tkfont.Font(family="Segoe UI Symbol", size=20)
 
         self._configure_style()
         self._build_layout()
@@ -396,7 +345,8 @@ class CourseCalculatorApp:
         style.map("TButton", background=[("active", "#E1E7EC"), ("disabled", "#F4F5F6")])
         style.configure("Primary.TButton", padding=(14, 8), background=ACCENT, foreground="#FFFFFF", font=("Microsoft YaHei UI", 10, "bold"))
         style.map("Primary.TButton", background=[("active", ACCENT_HOVER), ("disabled", "#A6BBC4")])
-        style.configure("Treeview", rowheight=30, background=SURFACE, fieldbackground=SURFACE, foreground=TEXT, bordercolor=BORDER)
+        style.configure("Treeview", rowheight=36, background=SURFACE, fieldbackground=SURFACE, foreground=TEXT, bordercolor=BORDER, font=("Microsoft YaHei UI", 10))
+        style.configure("Course.Treeview", rowheight=42, background=SURFACE, fieldbackground=SURFACE, foreground=TEXT, font=("Microsoft YaHei UI", 11))
         style.configure("Treeview.Heading", background="#E9EEF3", foreground=TEXT, font=("Microsoft YaHei UI", 9, "bold"), padding=(6, 7))
         style.map("Treeview", background=[("selected", "#DCECF2")], foreground=[("selected", TEXT)])
         style.configure("TLabelframe", background=SURFACE, bordercolor=BORDER, relief="solid", borderwidth=1)
@@ -468,20 +418,24 @@ class CourseCalculatorApp:
         course_header.pack(fill="x", pady=(0, 6))
         ttk.Label(course_header, textvariable=self.course_title_var, style="SectionTitle.TLabel").pack(anchor="w")
         course_actions = ttk.Frame(course_panel, style="Surface.TFrame")
-        course_actions.pack(fill="x", pady=(0, 8))
-        self.select_all_button = ttk.Button(course_actions, text="全选", command=lambda: self.set_current_selection(True))
+        course_actions.pack(fill="x", pady=(0, 6))
+        selection_actions = ttk.Frame(course_actions, style="Surface.TFrame")
+        selection_actions.pack(fill="x", pady=(0, 6))
+        self.select_all_button = ttk.Button(selection_actions, text="全选", command=lambda: self.set_current_selection(True))
         self.select_all_button.pack(side="left")
-        self.select_none_button = ttk.Button(course_actions, text="全不选", command=lambda: self.set_current_selection(False))
+        self.select_none_button = ttk.Button(selection_actions, text="全不选", command=lambda: self.set_current_selection(False))
         self.select_none_button.pack(side="left", padx=(6, 0))
-        self.apply_all_button = ttk.Button(course_actions, text="应用当前科目方案到全部学生", command=self.apply_selection_to_all)
+        self.apply_all_button = ttk.Button(selection_actions, text="应用当前科目方案到全部学生", command=self.apply_selection_to_all)
         self.apply_all_button.pack(side="left", padx=(6, 0))
-        ttk.Label(course_actions, text="课程搜索", style="Muted.TLabel").pack(side="left", padx=(16, 6))
-        self.course_search_entry = ttk.Entry(course_actions, textvariable=self.course_search_var, width=20)
+        course_filters = ttk.Frame(course_actions, style="Surface.TFrame")
+        course_filters.pack(fill="x")
+        ttk.Label(course_filters, text="课程搜索", style="Muted.TLabel").pack(side="left", padx=(0, 6))
+        self.course_search_entry = ttk.Entry(course_filters, textvariable=self.course_search_var)
         self.course_search_entry.pack(side="left", fill="x", expand=True)
         self.course_search_entry.bind("<KeyRelease>", lambda _event: self._refresh_course_list())
-        ttk.Label(course_actions, text="取得方式", style="Muted.TLabel").pack(side="left", padx=(12, 6))
+        ttk.Label(course_filters, text="取得方式", style="Muted.TLabel").pack(side="left", padx=(12, 6))
         self.acquisition_filter_combo = ttk.Combobox(
-            course_actions,
+            course_filters,
             textvariable=self.acquisition_filter_var,
             values=ACQUISITION_FILTERS,
             state="readonly",
@@ -749,14 +703,46 @@ class CourseCalculatorApp:
         ttk.Label(frame, text="等效分数", style="CourseHeader.TLabel", padding=(8, 6)).grid(row=1, column=2, sticky="ew")
         suggestions = {"优秀": 95, "良好": 85, "中等": 75, "及格": 60, "合格": 60, "不及格": 0, "不合格": 0}
         controls: dict[str, tuple[tk.BooleanVar, tk.StringVar]] = {}
+        toggle_buttons: dict[str, tk.Button] = {}
+
+        def refresh_toggle(grade: str) -> None:
+            enabled, _value = controls[grade]
+            toggle_buttons[grade].configure(
+                text="☑" if enabled.get() else "☐",
+                background=ACCENT if enabled.get() else "#EEF1F4",
+                foreground="#FFFFFF" if enabled.get() else MUTED,
+                activebackground=ACCENT_HOVER if enabled.get() else "#E1E7EC",
+            )
+
+        def toggle_grade(grade: str) -> None:
+            enabled, _value = controls[grade]
+            enabled.set(not enabled.get())
+            refresh_toggle(grade)
+
         for row_index, grade in enumerate(grades, start=2):
             current = self.text_mapping.get(grade)
             enabled = tk.BooleanVar(value=current is not None)
             value = tk.StringVar(value=_display_number(current if current is not None else suggestions.get(grade, 60), 2))
-            ttk.Checkbutton(frame, variable=enabled).grid(row=row_index, column=0, padx=10, pady=6)
+            controls[grade] = (enabled, value)
+            toggle = tk.Button(
+                frame,
+                text="☑" if enabled.get() else "☐",
+                font=self.toggle_font,
+                width=3,
+                height=1,
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                background=ACCENT if enabled.get() else "#EEF1F4",
+                foreground="#FFFFFF" if enabled.get() else MUTED,
+                activebackground=ACCENT_HOVER if enabled.get() else "#E1E7EC",
+                activeforeground="#FFFFFF" if enabled.get() else TEXT,
+                command=lambda grade_name=grade: toggle_grade(grade_name),
+            )
+            toggle.grid(row=row_index, column=0, padx=8, pady=4, sticky="ew")
+            toggle_buttons[grade] = toggle
             ttk.Label(frame, text=grade, style="Toolbar.TLabel", padding=(8, 6)).grid(row=row_index, column=1, sticky="ew")
             ttk.Entry(frame, textvariable=value, width=12, justify="center").grid(row=row_index, column=2, padx=(8, 0), pady=6)
-            controls[grade] = (enabled, value)
 
         button_row = ttk.Frame(frame, style="Surface.TFrame")
         button_row.grid(row=2 + len(grades), column=0, columnspan=3, sticky="e", pady=(14, 0))

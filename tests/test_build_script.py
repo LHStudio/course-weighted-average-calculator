@@ -14,6 +14,13 @@ class BuildScriptTests(unittest.TestCase):
         self.assertIn("--icon", script)
         self.assertIn("--add-data", script)
 
+    def test_icon_source_has_distinct_score_sheet_colors(self):
+        icon = (Path(__file__).parents[1] / "assets" / "icon.svg").read_text(encoding="utf-8")
+
+        self.assertIn("#F4B942", icon)
+        self.assertIn("#287A4D", icon)
+        self.assertIn("#FFFFFF", icon)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,7 +29,9 @@ class AppImportTests(unittest.TestCase):
         try:
             window = app.CourseCalculatorApp(root)
             self.assertTrue(hasattr(window.course_list, "header_canvas"))
-            self.assertGreaterEqual(window.course_list.checkbox_font.cget("size"), 12)
+            self.assertIs(window.course_list.header_canvas, window.course_list.tree)
+            self.assertGreaterEqual(window.course_list.checkbox_font.cget("size"), 18)
+            self.assertGreaterEqual(window.toggle_font.cget("size"), 18)
         finally:
             root.destroy()
 
@@ -159,7 +161,31 @@ class AppImportTests(unittest.TestCase):
             )
             course_list.set_records([item], {"r1": True}, {}, lambda *_args: None)
             self.assertEqual(course_list.row_styles["r1"], "warning")
-            self.assertEqual(course_list._checkbuttons["r1"].cget("background"), "#FFF5E6")
+            self.assertEqual(course_list.tree.item("r1", "tags"), ("warning",))
+            self.assertEqual(course_list.tree.item("r1", "values")[0], "☑")
+        finally:
+            root.destroy()
+
+    def test_course_tree_toggle_uses_large_visible_checkbox_symbols(self):
+        import app
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            course_list = app.ScrollableCourseList(root)
+            item = app.CourseRecord(
+                record_id="r1", source_index=0, student_id="s1", student_name="A",
+                course_code="C1", course_name="Course", credits=1, raw_score="90",
+            )
+            changes = []
+            course_list.set_records(
+                [item], {"r1": True}, {},
+                lambda record, selected: changes.append((record.record_id, selected)),
+            )
+            self.assertEqual(course_list.tree.item("r1", "values")[0], "☑")
+            course_list._toggle_item("r1")
+            self.assertEqual(course_list.tree.item("r1", "values")[0], "☐")
+            self.assertEqual(changes, [("r1", False)])
         finally:
             root.destroy()
 
