@@ -124,6 +124,45 @@ class AppImportTests(unittest.TestCase):
         finally:
             root.destroy()
 
+    def test_student_and_course_filters_match_ids_names_codes_and_acquisition(self):
+        import app
+
+        first = app.CourseRecord(
+            record_id="r1", source_index=0, student_id="1001", student_name="张三",
+            course_code="CS101", course_name="数据结构", credits=1, raw_score="90",
+            acquisition="初修取得",
+        )
+        second = app.CourseRecord(
+            record_id="r2", source_index=1, student_id="1002", student_name="李四",
+            course_code="CS202", course_name="操作系统", credits=1, raw_score="80",
+            acquisition="补考取得",
+        )
+
+        students = {"1001": [first], "1002": [second]}
+        self.assertEqual(list(app.filter_student_records(students, "张").keys()), ["1001"])
+        self.assertEqual(list(app.filter_student_records(students, "1002").keys()), ["1002"])
+        self.assertEqual(app.filter_course_records([first, second], "CS2", "全部"), [second])
+        self.assertEqual(app.filter_course_records([first, second], "", "非初修取得"), [second])
+        self.assertEqual(app.filter_course_records([first, second], "", "补考取得"), [second])
+
+    def test_non_initial_course_uses_warning_row_style(self):
+        import app
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            course_list = app.ScrollableCourseList(root)
+            item = app.CourseRecord(
+                record_id="r1", source_index=0, student_id="s1", student_name="A",
+                course_code="C1", course_name="Course", credits=1, raw_score="90",
+                acquisition="重修取得",
+            )
+            course_list.set_records([item], {"r1": True}, {}, lambda *_args: None)
+            self.assertEqual(course_list.row_styles["r1"], "warning")
+            self.assertEqual(course_list._checkbuttons["r1"].cget("background"), "#FFF5E6")
+        finally:
+            root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()

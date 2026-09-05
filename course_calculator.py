@@ -10,17 +10,9 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 
-DEFAULT_GPA_BANDS: tuple[tuple[float, float], ...] = (
-    (90, 4.0),
-    (85, 3.7),
-    (82, 3.3),
-    (78, 3.0),
-    (75, 2.7),
-    (72, 2.3),
-    (68, 2.0),
-    (64, 1.5),
-    (60, 1.0),
-    (0, 0.0),
+DEFAULT_GPA_BANDS: tuple[tuple[float, float], ...] = tuple(
+    [(score, round(1.0 + (score - 60) * 0.1, 1)) for score in range(90, 59, -1)]
+    + [(0, 0.0)]
 )
 
 REQUIRED_HEADERS = ("学号", "姓名", "课程名称", "学分", "成绩")

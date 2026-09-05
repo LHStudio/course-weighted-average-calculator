@@ -33,6 +33,41 @@ SUCCESS = "#287A4D"
 
 KEY_MODE_LABELS = {"按课程代码": "code", "按课程名称": "name"}
 KEEP_MODE_LABELS = {"最后一条": "last", "第一条": "first", "全部保留": "all"}
+ACQUISITION_FILTERS = ("全部", "初修取得", "非初修取得", "补考取得", "重修取得")
+
+
+def filter_student_records(
+    student_records: dict[str, Sequence[CourseRecord]], query: str = ""
+) -> dict[str, Sequence[CourseRecord]]:
+    normalized = query.strip().casefold()
+    if not normalized:
+        return dict(student_records)
+    return {
+        student_id: records
+        for student_id, records in student_records.items()
+        if normalized in str(student_id).casefold()
+        or any(normalized in str(record.student_name or "").casefold() for record in records)
+    }
+
+
+def filter_course_records(
+    records: Sequence[CourseRecord], query: str = "", acquisition_filter: str = "全部"
+) -> list[CourseRecord]:
+    normalized = query.strip().casefold()
+    return [
+        record
+        for record in records
+        if (
+            not normalized
+            or normalized in str(record.course_code or "").casefold()
+            or normalized in str(record.course_name or "").casefold()
+        )
+        and (
+            acquisition_filter == "全部"
+            or (acquisition_filter == "非初修取得" and record.acquisition != "初修取得")
+            or record.acquisition == acquisition_filter
+        )
+    ]
 
 
 def _display_number(value: object, digits: int = 1) -> str:
@@ -66,6 +101,7 @@ class ScrollableCourseList(ttk.Frame):
         self.checkbox_font = tkfont.Font(family="Microsoft YaHei UI", size=13)
         self._variables: list[tk.BooleanVar] = []
         self._checkbuttons: dict[str, tk.Checkbutton] = {}
+        self.row_styles: dict[str, str] = {}
 
         self.header_canvas = tk.Canvas(self, background="#E9EEF3", height=34, highlightthickness=0)
         self.header_frame = ttk.Frame(self.header_canvas, style="Surface.TFrame")
@@ -134,6 +170,7 @@ class ScrollableCourseList(ttk.Frame):
             child.destroy()
         self._variables.clear()
         self._checkbuttons.clear()
+        self.row_styles.clear()
 
         self._configure_columns(self.header_frame)
         for column, (label, width, anchor) in enumerate(self.COLUMNS):
@@ -159,20 +196,22 @@ class ScrollableCourseList(ttk.Frame):
 
         self._configure_columns(self.inner)
         for row_index, record in enumerate(records):
+            is_non_initial = record.acquisition != "初修取得"
+            self.row_styles[record.record_id] = "warning" if is_non_initial else "normal"
             variable = tk.BooleanVar(value=selection_state.get(record.record_id, True))
             self._variables.append(variable)
             check = tk.Checkbutton(
                 self.inner,
                 variable=variable,
                 font=self.checkbox_font,
-                background=SURFACE,
-                activebackground=SURFACE,
+                background="#FFF5E6" if is_non_initial else SURFACE,
+                activebackground="#FFF5E6" if is_non_initial else SURFACE,
                 selectcolor="#CFE8EF",
                 relief="flat",
                 bd=0,
                 highlightthickness=0,
-                padx=5,
-                pady=0,
+                padx=8,
+                pady=4,
                 command=lambda item=record, var=variable: on_change(item, var.get()),
             )
             check.grid(row=row_index, column=0, sticky="nsew", padx=(12, 4), pady=1)
@@ -189,7 +228,10 @@ class ScrollableCourseList(ttk.Frame):
             )
             score_is_text = parse_score(record.raw_score, {}) is None
             for column, value in enumerate(values, start=1):
-                style = "Warning.TLabel" if column == 4 and score_is_text else "CourseCell.TLabel"
+                if is_non_initial:
+                    style = "WarningCourseText.TLabel" if column == 7 else "WarningCourseCell.TLabel"
+                else:
+                    style = "Warning.TLabel" if column == 4 and score_is_text else "CourseCell.TLabel"
                 label = ttk.Label(
                     self.inner,
                     text=value,
@@ -198,7 +240,7 @@ class ScrollableCourseList(ttk.Frame):
                     style=style,
                 )
                 label.grid(row=row_index, column=column, sticky="nsew", pady=1)
-            self.inner.grid_rowconfigure(row_index, minsize=34)
+            self.inner.grid_rowconfigure(row_index, minsize=40)
         self.canvas.yview_moveto(0)
         self._update_scroll_region()
 
@@ -217,13 +259,21 @@ class GpaBandsEditor(ttk.Frame):
         ttk.Label(self, text="绩点", style="CourseHeader.TLabel", padding=(20, 6)).grid(
             row=0, column=1, sticky="ew", padx=(6, 0)
         )
-        self.rows_frame = ttk.Frame(self, style="Surface.TFrame")
-        self.rows_frame.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self.rows_canvas = tk.Canvas(self, background=SURFACE, highlightthickness=0, height=430)
+        self.rows_scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.rows_canvas.yview)
+        self.rows_canvas.configure(yscrollcommand=self.rows_scrollbar.set)
+        self.rows_canvas.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        self.rows_scrollbar.grid(row=1, column=2, sticky="ns", padx=(8, 0))
+        self.rows_frame = ttk.Frame(self.rows_canvas, style="Surface.TFrame")
+        self.rows_window = self.rows_canvas.create_window((0, 0), window=self.rows_frame, anchor="nw")
+        self.rows_frame.bind("<Configure>", self._update_rows_scrollregion)
+        self.rows_canvas.bind("<Configure>", self._resize_rows_frame)
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
+        self.rowconfigure(1, weight=1)
 
         controls = ttk.Frame(self, style="Surface.TFrame")
-        controls.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        controls.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         ttk.Button(controls, text="添加分段", command=self.add_row).pack(side="left")
         ttk.Button(controls, text="删除末行", command=self.remove_row).pack(side="left", padx=(6, 0))
 
@@ -231,6 +281,12 @@ class GpaBandsEditor(ttk.Frame):
             self.add_row(threshold, points)
         if not self.variables:
             self.add_row()
+
+    def _update_rows_scrollregion(self, _event=None) -> None:
+        self.rows_canvas.configure(scrollregion=self.rows_canvas.bbox("all"))
+
+    def _resize_rows_frame(self, event) -> None:
+        self.rows_canvas.itemconfigure(self.rows_window, width=event.width)
 
     def add_row(self, threshold: object = "", points: object = "") -> None:
         threshold_var = tk.StringVar(value=_display_number(threshold, 2) if threshold != "" else "")
@@ -251,9 +307,12 @@ class GpaBandsEditor(ttk.Frame):
         self._regrid_rows()
 
     def _regrid_rows(self) -> None:
+        self.rows_frame.columnconfigure(0, weight=1)
+        self.rows_frame.columnconfigure(1, weight=1)
         for row_index, (threshold_entry, points_entry) in enumerate(self._rows):
-            threshold_entry.grid(row=row_index, column=0, padx=(0, 6), pady=3)
-            points_entry.grid(row=row_index, column=1, padx=(6, 0), pady=3)
+            threshold_entry.grid(row=row_index, column=0, padx=(0, 6), pady=3, sticky="ew")
+            points_entry.grid(row=row_index, column=1, padx=(6, 0), pady=3, sticky="ew")
+        self._update_rows_scrollregion()
 
     def set_bands(self, bands: Sequence[tuple[float, float]]) -> None:
         for threshold_entry, points_entry in self._rows:
@@ -304,6 +363,9 @@ class CourseCalculatorApp:
         self.summary_var = tk.StringVar(value="打开成绩文件后即可开始计算")
         self.student_title_var = tk.StringVar(value="学生")
         self.course_title_var = tk.StringVar(value="课程明细")
+        self.student_search_var = tk.StringVar()
+        self.course_search_var = tk.StringVar()
+        self.acquisition_filter_var = tk.StringVar(value=ACQUISITION_FILTERS[0])
 
         self._configure_style()
         self._build_layout()
@@ -326,6 +388,8 @@ class CourseCalculatorApp:
         style.configure("CourseHeader.TLabel", background="#E9EEF3", foreground=TEXT, font=("Microsoft YaHei UI", 9, "bold"))
         style.configure("CourseCell.TLabel", background=SURFACE, foreground=TEXT, font=("Microsoft YaHei UI", 9))
         style.configure("Warning.TLabel", background="#FFF5E6", foreground=WARNING, font=("Microsoft YaHei UI", 9, "bold"))
+        style.configure("WarningCourseCell.TLabel", background="#FFF5E6", foreground=TEXT, font=("Microsoft YaHei UI", 9))
+        style.configure("WarningCourseText.TLabel", background="#FFF5E6", foreground=WARNING, font=("Microsoft YaHei UI", 9, "bold"))
         style.configure("Empty.TLabel", background=SURFACE, foreground=MUTED)
         style.configure("Status.TLabel", background="#EAF3F6", foreground=ACCENT, padding=(12, 7))
         style.configure("TButton", padding=(12, 7), background="#EEF1F4", foreground=TEXT, borderwidth=1)
@@ -375,10 +439,16 @@ class CourseCalculatorApp:
 
         student_panel = ttk.Frame(selection_panel, style="Surface.TFrame", padding=(12, 10))
         course_panel = ttk.Frame(selection_panel, style="Surface.TFrame", padding=(12, 10))
-        selection_panel.add(student_panel, weight=1)
-        selection_panel.add(course_panel, weight=3)
+        selection_panel.add(student_panel, weight=2)
+        selection_panel.add(course_panel, weight=5)
 
         ttk.Label(student_panel, textvariable=self.student_title_var, style="SectionTitle.TLabel").pack(fill="x", pady=(0, 8))
+        student_search = ttk.Frame(student_panel, style="Surface.TFrame")
+        student_search.pack(fill="x", pady=(0, 8))
+        ttk.Label(student_search, text="搜索", style="Muted.TLabel").pack(side="left", padx=(0, 6))
+        self.student_search_entry = ttk.Entry(student_search, textvariable=self.student_search_var)
+        self.student_search_entry.pack(side="left", fill="x", expand=True)
+        self.student_search_entry.bind("<KeyRelease>", lambda _event: self._refresh_student_tree())
         student_tree_frame = ttk.Frame(student_panel, style="Surface.TFrame")
         student_tree_frame.pack(fill="both", expand=True)
         self.student_tree = ttk.Treeview(student_tree_frame, columns=("id", "name", "state"), show="headings", selectmode="browse")
@@ -405,6 +475,20 @@ class CourseCalculatorApp:
         self.select_none_button.pack(side="left", padx=(6, 0))
         self.apply_all_button = ttk.Button(course_actions, text="应用当前科目方案到全部学生", command=self.apply_selection_to_all)
         self.apply_all_button.pack(side="left", padx=(6, 0))
+        ttk.Label(course_actions, text="课程搜索", style="Muted.TLabel").pack(side="left", padx=(16, 6))
+        self.course_search_entry = ttk.Entry(course_actions, textvariable=self.course_search_var, width=20)
+        self.course_search_entry.pack(side="left", fill="x", expand=True)
+        self.course_search_entry.bind("<KeyRelease>", lambda _event: self._refresh_course_list())
+        ttk.Label(course_actions, text="取得方式", style="Muted.TLabel").pack(side="left", padx=(12, 6))
+        self.acquisition_filter_combo = ttk.Combobox(
+            course_actions,
+            textvariable=self.acquisition_filter_var,
+            values=ACQUISITION_FILTERS,
+            state="readonly",
+            width=12,
+        )
+        self.acquisition_filter_combo.pack(side="left")
+        self.acquisition_filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_course_list())
         self.course_list = ScrollableCourseList(course_panel)
         self.course_list.pack(fill="both", expand=True)
 
@@ -444,6 +528,9 @@ class CourseCalculatorApp:
             button.configure(state=state)
         self.key_combo.configure(state=combo_state)
         self.keep_combo.configure(state=combo_state)
+        self.student_search_entry.configure(state=state)
+        self.course_search_entry.configure(state=state)
+        self.acquisition_filter_combo.configure(state=combo_state)
 
     def _load_initial_file(self) -> None:
         if len(sys.argv) > 1:
@@ -517,12 +604,16 @@ class CourseCalculatorApp:
 
     def _refresh_student_tree(self) -> None:
         selected_id = self.current_student_id
+        visible_students = filter_student_records(self.student_records, self.student_search_var.get())
         self.student_tree.delete(*self.student_tree.get_children())
         result_by_id = {str(row["student_id"]): row for row in self.result_rows}
-        for student_id, records in self.student_records.items():
+        for student_id, records in visible_students.items():
             row = result_by_id.get(student_id, {})
             status = "可计算" if row.get("weighted_average") is not None else "无有效成绩"
             self.student_tree.insert("", "end", iid=student_id, values=(student_id, records[0].student_name, status))
+        if selected_id not in visible_students:
+            selected_id = next(iter(visible_students), None)
+            self.current_student_id = selected_id
         if selected_id and self.student_tree.exists(selected_id):
             self.student_tree.selection_set(selected_id)
             self.student_tree.focus(selected_id)
@@ -541,8 +632,11 @@ class CourseCalculatorApp:
             self._refresh_course_list()
 
     def _refresh_course_list(self) -> None:
-        records = self.student_records.get(self.current_student_id or "", [])
-        self._update_course_title(records)
+        all_records = self.student_records.get(self.current_student_id or "", [])
+        records = filter_course_records(
+            all_records, self.course_search_var.get(), self.acquisition_filter_var.get()
+        )
+        self._update_course_title(all_records)
         self.course_list.set_records(records, self.selection_state, self.text_mapping, self._on_course_toggled)
 
     def _update_course_title(self, records: Sequence[CourseRecord] | None = None) -> None:
@@ -696,6 +790,8 @@ class CourseCalculatorApp:
         dialog = tk.Toplevel(self.root)
         dialog.title("绩点换算规则")
         dialog.transient(self.root)
+        dialog.geometry("520x680")
+        dialog.minsize(500, 620)
         dialog.resizable(False, True)
         frame = ttk.Frame(dialog, style="Surface.TFrame", padding=18)
         frame.pack(fill="both", expand=True)
@@ -703,8 +799,9 @@ class CourseCalculatorApp:
             row=0, column=0, sticky="w", pady=(0, 12)
         )
         editor = GpaBandsEditor(frame, self.gpa_bands)
-        editor.grid(row=1, column=0, sticky="ew")
+        editor.grid(row=1, column=0, sticky="nsew")
         frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
 
         def restore_defaults() -> None:
             editor.set_bands(DEFAULT_GPA_BANDS)

@@ -9,6 +9,7 @@ from course_calculator import (
     calculate_student,
     deduplicate_records,
     parse_grade_file,
+    score_to_gpa,
 )
 
 from test_fixture_helpers import write_html_fixture
@@ -25,6 +26,7 @@ def record(
     source_index=0,
     grade_year="",
     term="",
+    acquisition="初修取得",
 ):
     return CourseRecord(
         record_id=record_id,
@@ -37,6 +39,7 @@ def record(
         raw_score=score,
         grade_year=grade_year,
         term=term,
+        acquisition=acquisition,
     )
 
 
@@ -146,6 +149,15 @@ class CourseCalculatorTests(unittest.TestCase):
 
         self.assertEqual(thresholds, sorted(thresholds, reverse=True))
         self.assertEqual(thresholds[-1], 0)
+
+    def test_default_gpa_bands_have_one_point_steps_from_60_to_90(self):
+        self.assertEqual(len(DEFAULT_GPA_BANDS), 32)
+        self.assertEqual(score_to_gpa(100), 4.0)
+        self.assertEqual(score_to_gpa(90), 4.0)
+        self.assertEqual(score_to_gpa(89), 3.9)
+        self.assertEqual(score_to_gpa(75), 2.5)
+        self.assertEqual(score_to_gpa(60), 1.0)
+        self.assertEqual(score_to_gpa(59), 0.0)
 
 
 if __name__ == "__main__":
